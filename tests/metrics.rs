@@ -18,16 +18,16 @@ fn gather_text(registry: &Registry) -> String {
     let families = registry.gather();
     let encoder = TextEncoder::new();
     let mut buffer = Vec::new();
-    encoder.encode(&families, &mut buffer).unwrap();
-    String::from_utf8(buffer).unwrap()
+    encoder
+        .encode(&families, &mut buffer)
+        .expect("failed to encode metrics");
+    String::from_utf8(buffer).unwrap_or_default()
 }
 
 /// True if a non-comment sample line matches metric name and all label fragments.
 fn has_sample(text: &str, metric: &str, labels: &[&str]) -> bool {
     text.lines().any(|line| {
-        !line.starts_with('#')
-            && line.contains(metric)
-            && labels.iter().all(|l| line.contains(l))
+        !line.starts_with('#') && line.contains(metric) && labels.iter().all(|l| line.contains(l))
     })
 }
 
@@ -154,7 +154,10 @@ async fn request_tracker_reject_and_fail_labels() {
 
     {
         let mut t = RequestTracker::new(metrics.clone());
-        t.reject(RejectFormat::Unsupported, RequestStatus::UnsupportedMediaType);
+        t.reject(
+            RejectFormat::Unsupported,
+            RequestStatus::UnsupportedMediaType,
+        );
     }
     {
         let mut t = RequestTracker::new(metrics.clone());
@@ -232,11 +235,7 @@ async fn handler_labels_pass_through() {
         has_sample(
             &text,
             "image_requests_total",
-            &[
-                "status=\"ok\"",
-                "path=\"pass_through\"",
-                "format=\"jpeg\"",
-            ]
+            &["status=\"ok\"", "path=\"pass_through\"", "format=\"jpeg\"",]
         ),
         "pass_through labels missing: {text}"
     );
@@ -297,11 +296,8 @@ async fn handler_labels_rejected() {
     )
     .await;
 
-    let resp = test::call_service(
-        &app,
-        test::TestRequest::get().uri("/file.exe").to_request(),
-    )
-    .await;
+    let resp =
+        test::call_service(&app, test::TestRequest::get().uri("/file.exe").to_request()).await;
     assert_eq!(resp.status(), 415);
 
     let text = gather_text(registry.get_ref());
@@ -320,7 +316,9 @@ async fn handler_labels_rejected() {
     // Raw extension must not become a metric label (cardinality).
     assert!(
         !text.lines().any(|l| {
-            !l.starts_with('#') && l.contains("image_requests_total") && l.contains("format=\"exe\"")
+            !l.starts_with('#')
+                && l.contains("image_requests_total")
+                && l.contains("format=\"exe\"")
         }),
         "raw extension leaked into format label: {text}"
     );
@@ -415,7 +413,8 @@ async fn handler_labels_cache_hit() {
         ..EncodingConfig::default()
     };
     cfg.cache_status_header = "X-Image-Proxy-Cache".to_string();
-    let (cfg, client, cache, registry, app_metrics) = build_app_data_with_cache(Arc::new(cfg)).await;
+    let (cfg, client, cache, registry, app_metrics) =
+        build_app_data_with_cache(Arc::new(cfg)).await;
 
     let app = test::init_service(
         App::new()

@@ -9,7 +9,7 @@ use image_proxy::config::EncodingConfig;
 
 /// Helper: write nothing to the dir (so every lookup misses and hits fallback).
 fn empty_root() -> tempfile::TempDir {
-    tempfile::tempdir().unwrap()
+    tempfile::tempdir().expect("failed to create temp dir")
 }
 
 #[actix_web::test]

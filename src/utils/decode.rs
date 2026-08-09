@@ -23,9 +23,9 @@ mod tests {
             img.height(),
             image::ExtendedColorType::Rgb8,
         )
-        .unwrap();
+        .expect("Failed to encode image");
 
-        let decoded = decode_image(&buf).unwrap();
+        let decoded = decode_image(&buf).expect("Failed to decode image");
         assert_eq!(decoded.width(), 4);
         assert_eq!(decoded.height(), 4);
     }

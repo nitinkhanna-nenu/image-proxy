@@ -11,13 +11,17 @@ use image_proxy::utils::{build_http_client, default_user_agent};
 /// `User-Agent`, then request a missing file so the fallback path fetches
 /// from `upstream`. Returns the captured `User-Agent`.
 async fn captured_user_agent_for(user_agent: &str) -> String {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir().expect("failed to create temp dir");
     let jpeg = make_test_jpeg_bytes(16, 16);
     let (upstream, captured_user_agent, _handle) =
         start_user_agent_capturing_server(jpeg, "image/jpeg").await;
 
     let config = Arc::new(EncodingConfig {
-        root_path: dir.path().to_str().unwrap().to_string(),
+        root_path: dir
+            .path()
+            .to_str()
+            .expect("failed to convert temp dir path to str")
+            .to_string(),
         fallback_image_url: Some(upstream),
         user_agent: user_agent.to_string(),
         ..EncodingConfig::default()
@@ -35,7 +39,7 @@ async fn captured_user_agent_for(user_agent: &str) -> String {
 
     captured_user_agent
         .lock()
-        .unwrap()
+        .expect("failed to lock captured user agent")
         .clone()
         .expect("upstream should have received a User-Agent header")
 }

@@ -1,3 +1,16 @@
+// Strict clippy lints enforced on production code only. See src/lib.rs.
+#![deny(clippy::unwrap_used)]
+#![deny(clippy::indexing_slicing)]
+#![warn(clippy::arithmetic_side_effects)]
+#![deny(clippy::unreachable)]
+#![deny(clippy::unimplemented)]
+#![deny(clippy::unchecked_time_subtraction)]
+#![warn(clippy::todo)]
+#![deny(clippy::string_slice)]
+#![deny(clippy::panic_in_result_fn)]
+#![deny(clippy::panic)]
+#![deny(clippy::exit)]
+
 use std::sync::Arc;
 
 use actix_web::{App, HttpServer, middleware, web};

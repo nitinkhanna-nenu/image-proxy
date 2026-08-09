@@ -155,7 +155,11 @@ async fn convert_to_jxl_from_alpha_image() {
 async fn dpr_query_param_multiplies_size() {
     let dir = tempfile::tempdir().unwrap();
     // Larger source so that effective size after DPR is observable (not clamped to source)
-    std::fs::write(dir.path().join("photo.jpeg"), common::make_test_jpeg_bytes(64, 64)).unwrap();
+    std::fs::write(
+        dir.path().join("photo.jpeg"),
+        common::make_test_jpeg_bytes(64, 64),
+    )
+    .unwrap();
     let config = test_config(dir.path().to_str().unwrap());
     let app = init_test_app!(config);
 
@@ -176,7 +180,11 @@ async fn dpr_query_param_multiplies_size() {
 #[actix_web::test]
 async fn dpr_from_sec_ch_dpr_header() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("photo.jpeg"), common::make_test_jpeg_bytes(64, 64)).unwrap();
+    std::fs::write(
+        dir.path().join("photo.jpeg"),
+        common::make_test_jpeg_bytes(64, 64),
+    )
+    .unwrap();
     let config = test_config(dir.path().to_str().unwrap());
     let app = init_test_app!(config);
 
@@ -194,7 +202,11 @@ async fn dpr_from_sec_ch_dpr_header() {
 #[actix_web::test]
 async fn dpr_out_of_range_is_ignored() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("photo.jpeg"), common::make_test_jpeg_bytes(64, 64)).unwrap();
+    std::fs::write(
+        dir.path().join("photo.jpeg"),
+        common::make_test_jpeg_bytes(64, 64),
+    )
+    .unwrap();
     let config = test_config(dir.path().to_str().unwrap());
     let app = init_test_app!(config);
 
@@ -285,7 +297,11 @@ async fn bw_preserves_alpha_on_png() {
 #[actix_web::test]
 async fn bw_combines_with_size_and_format() {
     let dir = tempfile::tempdir().unwrap();
-    std::fs::write(dir.path().join("photo.jpeg"), common::make_test_jpeg_bytes(64, 64)).unwrap();
+    std::fs::write(
+        dir.path().join("photo.jpeg"),
+        common::make_test_jpeg_bytes(64, 64),
+    )
+    .unwrap();
     let config = test_config(dir.path().to_str().unwrap());
     let app = init_test_app!(config);
 

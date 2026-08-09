@@ -8,7 +8,7 @@ use common::test_config;
 fn write_test_svg(dir: &std::path::Path, name: &str) -> std::path::PathBuf {
     let path = dir.join(name);
     let svg = r#"<svg xmlns="http://www.w3.org/2000/svg" width="8" height="8"><rect width="8" height="8" fill="red"/></svg>"#;
-    std::fs::write(&path, svg).unwrap();
+    std::fs::write(&path, svg).expect("failed to write test SVG");
     path
 }
 

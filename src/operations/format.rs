@@ -93,10 +93,7 @@ pub fn convert_image_format(
 
             let jxl_data: EncoderResult<u8> = JXL_RUNNER.with(|cell| {
                 let mut slot = cell.borrow_mut();
-                if slot.is_none() {
-                    *slot = Some(ThreadsRunner::default());
-                }
-                let runner = slot.as_ref().unwrap();
+                let runner = slot.get_or_insert_with(ThreadsRunner::default);
 
                 let mut encoder = encoder_builder()
                     .lossless(config.jxl_lossless)
@@ -110,18 +107,22 @@ pub fn convert_image_format(
                     .speed(jxl_encoder_speed_from_int(config.jxl_speed))
                     .parallel_runner(runner)
                     .build()
-                    .unwrap();
+                    .map_err(|e| anyhow::anyhow!("Failed to build JXL encoder: {:?}", e))?;
 
                 if has_alpha {
                     let rgba = image.into_rgba8();
                     let frame = jpegxl_rs::encode::EncoderFrame::new(rgba.as_raw()).num_channels(4);
-                    encoder.encode_frame(&frame, w, h).unwrap()
+                    encoder
+                        .encode_frame(&frame, w, h)
+                        .map_err(|e| anyhow::anyhow!("Failed to encode JXL image: {:?}", e))
                 } else {
                     let rgb = image.into_rgb8();
                     let frame = jpegxl_rs::encode::EncoderFrame::new(rgb.as_raw()).num_channels(3);
-                    encoder.encode_frame(&frame, w, h).unwrap()
+                    encoder
+                        .encode_frame(&frame, w, h)
+                        .map_err(|e| anyhow::anyhow!("Failed to encode JXL image: {:?}", e))
                 }
-            });
+            })?;
             buffer.extend_from_slice(&jxl_data);
         }
         Some(other) => {

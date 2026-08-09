@@ -68,7 +68,10 @@ pub async fn process_image_request(
         Err(PathValidationError::UnsupportedFormat(ext)) => {
             // Metric format is a closed sentinel; keep the real extension only in the body/logs.
             tracing::debug!(ext = %ext, "unsupported file format");
-            tracker.reject(RejectFormat::Unsupported, RequestStatus::UnsupportedMediaType);
+            tracker.reject(
+                RejectFormat::Unsupported,
+                RequestStatus::UnsupportedMediaType,
+            );
             return Ok(HttpResponse::UnsupportedMediaType()
                 .body(format!("Unsupported file format: {}", ext)));
         }
@@ -122,7 +125,10 @@ pub async fn process_image_request(
     {
         // Metric format is a closed sentinel; keep the requested value only in the body/logs.
         tracing::debug!(requested_format = %fmt, "requested output format not allowed");
-        tracker.reject(RejectFormat::Unsupported, RequestStatus::UnsupportedMediaType);
+        tracker.reject(
+            RejectFormat::Unsupported,
+            RequestStatus::UnsupportedMediaType,
+        );
         return Ok(HttpResponse::UnsupportedMediaType()
             .body(format!("Requested output format '{}' is not allowed", fmt)));
     }
@@ -210,8 +216,10 @@ pub async fn process_image_request(
     let mut from_fallback = false;
     if !sanitized_disk_path.exists() {
         // If the file doesn't exist, check if a fallback image URL is configured
-        if config.fallback_image_url.is_some()
-            && !config.fallback_image_url.as_ref().unwrap().is_empty()
+        if config
+            .fallback_image_url
+            .as_ref()
+            .is_some_and(|s| !s.is_empty())
         {
             from_fallback = true;
             let url = match &config.fallback_image_url {
