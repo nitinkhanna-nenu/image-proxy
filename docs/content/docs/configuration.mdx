@@ -46,6 +46,15 @@ See [Formats](/docs/formats) for details on each format's quality and speed para
 | ------------------------------ | ------- | ------------------------------- | -------------------------------------------------------- |
 | `IMAGE_PROXY_RESIZE_ALGORITHM` | `auto`  | `auto`, `lanczos3`, `bicubic`, `gaussian`, `thumbnail` | Default resize algorithm. Can be overridden per-request. |
 
+## Safety Limits
+
+Guards against decompression bombs and out-of-memory conditions. Set any of these to `0` to disable that specific check (not recommended).
+
+| Variable                       | Default             | Description                                                                                                                                                |
+| ------------------------------ | ------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `IMAGE_PROXY_MAX_DIMENSION`    | `8192`              | Maximum allowed image width or height in pixels. Images declaring larger dimensions are rejected before a pixel buffer is allocated.                        |
+| `IMAGE_PROXY_MAX_SOURCE_SIZE`  | `104857600` (100 MB) | Maximum on-disk source file size in bytes. Files larger than this are rejected with `413 Payload Too Large` before being read into memory. Note: this limit only applies to requests that require decoding or transformation; pass-through requests (no query parameters, source format matches the requested format) stream the file directly without loading it into memory, so the size limit does not apply to them. |
+
 ## Format Selection
 
 | Variable                             | Default   | Description                                                                                                                                                                                                    |

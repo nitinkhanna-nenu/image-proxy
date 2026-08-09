@@ -288,12 +288,19 @@ pub async fn process_image_request(
         } else {
             RequestPath::Transform
         };
-        image_bytes = load_bytes_from_disk(&path)
+        let max_source_size = config.max_source_size;
+        image_bytes = load_bytes_from_disk(&path, max_source_size)
             .await
             .map_err(|e| {
-                tracing::error!("Failed to read file: {}", e);
-                tracker.fail(path_if_load_fails, RequestStatus::Error);
-                actix_web::error::ErrorInternalServerError("Failed to read file")
+                if e.kind() == std::io::ErrorKind::FileTooLarge {
+                    tracing::warn!("Source file exceeds configured size limit");
+                    tracker.fail(path_if_load_fails, RequestStatus::Error);
+                    actix_web::error::ErrorPayloadTooLarge("Source file too large")
+                } else {
+                    tracing::error!("Failed to read file: {}", e);
+                    tracker.fail(path_if_load_fails, RequestStatus::Error);
+                    actix_web::error::ErrorInternalServerError("Failed to read file")
+                }
             })?
             .into();
     }
@@ -319,7 +326,7 @@ pub async fn process_image_request(
                 let _timer = pipeline_duration
                     .with_label_values(&["decode", &input_format])
                     .start_timer();
-                crate::utils::decode::decode_image(&image_bytes)?
+                crate::utils::decode::decode_image(&image_bytes, config_for_pipeline.get_ref())?
             };
             let bytes = crate::operations::pipeline::image_pipeline(
                 image,

@@ -63,6 +63,14 @@ pub struct EncodingConfig {
     pub allowed_output_formats: Option<Vec<String>>,
     /// Allow automatic upgrade to better formats (e.g., WebP, AVIF, JPEG XL) when the client supports them and the source image is not already in that format; if None, no automatic format upgrading will be performed
     pub preferred_formats: Option<Vec<String>>,
+
+    // Decoding safety limits (decompression-bomb / OOM protection)
+    /// Maximum allowed image width or height in pixels. Images declaring larger dimensions are
+    /// rejected before the decoder allocates a pixel buffer. `None` disables the check.
+    pub max_dimension: Option<u32>,
+    /// Maximum allowed on-disk source file size in bytes. Files larger than this are rejected
+    /// before being read into memory. `None` disables the check.
+    pub max_source_size: Option<usize>,
 }
 
 impl EncodingConfig {
@@ -156,6 +164,16 @@ impl EncodingConfig {
             preferred_formats: std::env::var("IMAGE_PROXY_PREFERRED_FORMATS")
                 .ok()
                 .map(|s| s.split(',').map(|s| s.trim().to_string()).collect()),
+            max_dimension: std::env::var("IMAGE_PROXY_MAX_DIMENSION")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .and_then(|s| s.parse::<u32>().ok())
+                .and_then(|v| if v == 0 { None } else { Some(v) }),
+            max_source_size: std::env::var("IMAGE_PROXY_MAX_SOURCE_SIZE")
+                .ok()
+                .filter(|s| !s.is_empty())
+                .and_then(|s| s.parse::<usize>().ok())
+                .and_then(|v| if v == 0 { None } else { Some(v) }),
         }
     }
 }
@@ -189,6 +207,8 @@ impl Default for EncodingConfig {
             cache_control_header: "public, max-age=31536000, no-transform".to_string(),
             allowed_output_formats: None,
             preferred_formats: None,
+            max_dimension: Some(8192),
+            max_source_size: Some(100 * 1024 * 1024),
         }
     }
 }
