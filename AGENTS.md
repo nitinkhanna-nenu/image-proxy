@@ -1,6 +1,6 @@
 # image-proxy — Agent Guide
 
-A lightweight HTTP image-serving and transformation proxy in Rust (actix-web). Serves images from disk, optionally resizing and converting formats on the fly, with a hybrid memory/disk cache and Prometheus metrics. See [README.md](README.md) and the [docs site source](docs/content/docs/).
+A lightweight HTTP image-serving and transformation proxy in Rust (actix-web). Serves images from disk, optionally resizing and converting formats on the fly, with a hybrid memory/disk cache, Prometheus metrics, and optional OpenTelemetry export. See [README.md](README.md) and the [docs site source](docs/content/docs/).
 
 ## Build, Run, Test
 
@@ -25,6 +25,8 @@ cargo pretty-test                        # all tests (unit + integration in test
 cargo pretty-test --test transformations # one integration test file
 cargo pretty-test <name> -- --nocapture  # one test, show output
 cargo clippy --all-targets
+cargo clippy --all-targets --features otel
+cargo test --features otel
 cargo fmt
 # Run locally (ROOT_PATH must point at a dir with images):
 IMAGE_PROXY_ROOT_PATH=./data/images RUST_LOG=debug cargo run --release
@@ -50,6 +52,7 @@ Request flow: actix-web server ([src/main.rs](src/main.rs)) → handler [src/api
 - [src/cache.rs](src/cache.rs) — hybrid memory/disk cache via `foyer`; disabled by default, returns `Option`.
 - [src/operations/format.rs](src/operations/format.rs) — encoders (AVIF/JPEG/PNG/WebP/JXL); [resize.rs](src/operations/resize.rs) — `ResizeAlgorithm`; [pipeline.rs](src/operations/pipeline.rs) — orchestration.
 - [src/utils/path.rs](src/utils/path.rs) — path sanitization (directory-traversal prevention); [mime.rs](src/utils/mime.rs); [encoding.rs](src/utils/encoding.rs).
+- [src/otel/](src/otel/mod.rs) — OTLP metric export, compiled in with the `otel` Cargo feature. Same request values as Prometheus, bounded labels. With the feature, export stays off unless an `OTEL_EXPORTER_OTLP_*` endpoint is set.
 - [src/preferred_formats.rs](src/preferred_formats.rs) — `Accept`-header format negotiation.
 
 ## Conventions & Pitfalls
@@ -60,7 +63,7 @@ Request flow: actix-web server ([src/main.rs](src/main.rs)) → handler [src/api
 - **Non-processable formats** (SVG, ICO, GIF, BMP, TIFF, JXL) are streamed raw and never decoded. Output re-encoding is only AVIF/JPEG/PNG/WebP/JXL.
 - **Cache keys must include every transform param** (format, size, resize algorithm, dpr) to avoid collisions.
 - **Errors**: use `anyhow::Result`; do not introduce custom error types. Map to HTTP status at the handler boundary.
-- **Observability**: keep `#[tracing::instrument]` on handlers and update Prometheus counters in [src/metrics.rs](src/metrics.rs) when adding code paths.
+- **Observability**: keep `#[tracing::instrument]` on handlers. New request paths go through `RequestTracker` in [src/metrics.rs](src/metrics.rs), which updates Prometheus and, when the `otel` feature is on, the OpenTelemetry instruments in [src/otel/](src/otel/mod.rs). Pipeline steps use `start_step`.
 
 ## Tests
 

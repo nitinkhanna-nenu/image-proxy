@@ -11,7 +11,7 @@
 - Pass-through support for non-processable input formats: **SVG**, **ICO**, **GIF**, **BMP**, **TIFF**, **JXL**
 - Fast pass-through when no transformation is requested (no decode/re-encode)
 - Hybrid in-memory and disk response cache (via [foyer](https://github.com/foyer-rs/foyer))
-- Prometheus metrics endpoint (`/metrics`)
+- Prometheus metrics endpoint (`/metrics`), and OpenTelemetry export when built with `--features otel`
 - Fallback image URL support (fetch from upstream when a file is not found in the mounted store)
 - Optional S3 mount (static keys or a temporary security token) with token-gated uploads
 - Forwards non-image API requests to a configured backend

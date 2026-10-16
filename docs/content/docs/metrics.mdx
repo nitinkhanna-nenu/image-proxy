@@ -1,10 +1,10 @@
 ---
 title: Metrics
-description: Prometheus metrics for monitoring image-proxy
+description: Prometheus and OpenTelemetry metrics for monitoring image-proxy
 icon: ChartLine
 ---
 
-image-proxy exposes Prometheus metrics at the `/metrics` endpoint in text exposition format.
+image-proxy exposes Prometheus metrics at the `/metrics` endpoint in text exposition format. The same request measurements can be exported as OpenTelemetry metrics. That exporter is compiled in with `--features otel` and left out otherwise.
 
 ## Endpoint
 
@@ -141,6 +141,36 @@ sum(rate(image_response_bytes_total[5m]))
 **Type:** Gauge
 
 Number of image requests currently being handled. Useful as a coarse saturation signal under transform load.
+
+## OpenTelemetry
+
+`/metrics` stays available whether or not the `otel` feature is compiled in. With the feature, OpenTelemetry records each finished request from the values already sent to Prometheus, then ships them with OTLP over HTTP (`http/protobuf`). Export stays off until `OTEL_EXPORTER_OTLP_ENDPOINT` or `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` is set, so a local process does not talk to `localhost:4318` on its own. A collector that cannot be reached is logged and ignored. The process keeps serving, and `/metrics` still works. Without the feature, none of these instruments are recorded.
+
+Duration and byte counts are measurements, not labels. `error_type` is added only when `status` is not `ok`. A `format` outside the list below is recorded as `unknown`. Prometheus keeps its existing label strings.
+
+| Instrument | Unit | Labels |
+| --- | --- | --- |
+| `image.request.count` | `{request}` | `format`, `status`, `path`, plus `error_type` on failures |
+| `image.request.duration` | `s` | same as the count |
+| `image.response.bytes` | `By` | `format`, `path`. Successful responses with a known size |
+| `image.request.in_flight` | `{request}` | none |
+| `image.pipeline.step.duration` | `s` | `step`, `format` |
+
+`format` is `avif`, `jpeg`, `jpg`, `png`, `webp`, `svg`, `ico`, `gif`, `bmp`, `tiff`, `jxl`, `unknown`, or `unsupported`.
+
+`status` and `path` use the same words as the Prometheus labels (`ok`, `not_found`, `pass_through`, and the rest of those sets).
+
+`step` is `decode`, `resize`, `bw`, or `encode`.
+
+`error_type` says who has to act:
+
+| `error_type` | `status` |
+| --- | --- |
+| `client_error` | `not_found`, `unsupported_media_type`, `unauthorized`, `forbidden`, `bad_request` |
+| `site_error` | `bad_gateway` |
+| `internal_error` | `error` |
+
+Histogram buckets match the Prometheus histograms for the same measurement. The resource carries `service.name` (`OTEL_SERVICE_NAME`, otherwise `image-proxy`), `service.version` from this build, and `deployment.environment.name` when `DEPLOYMENT_ENVIRONMENT` is set.
 
 ## Process metrics (Linux)
 

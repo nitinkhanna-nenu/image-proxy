@@ -15,6 +15,26 @@ All configuration is done through environment variables.
 | `IMAGE_PROXY_STRIP_PATH`   | _(unset)_      | Path prefix to strip from incoming requests. Useful when behind a reverse proxy that adds a prefix. |
 | `RUST_LOG`                 | `INFO`         | Log level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`)                                               |
 
+## OpenTelemetry
+
+OpenTelemetry is a Cargo feature. A build without `--features otel` leaves the exporter out, and the variables below are ignored. `/metrics` is unchanged either way. The Docker image compiles the feature in by default. Pass `--build-arg CARGO_FEATURES=` to build an image without it.
+
+With the feature compiled in, export uses the standard `OTEL_*` variables and stays off until an endpoint is set. Collector headers and the export timeout are read by the SDK and are not written to logs.
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | _(unset)_ | Collector base URL. Metrics are posted to `<url>/v1/metrics`. |
+| `OTEL_EXPORTER_OTLP_METRICS_ENDPOINT` | _(unset)_ | Full metrics URL, used exactly as given. Overrides the base URL. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | _(unset)_ | `http/protobuf`, or leave unset. Any other value disables export. |
+| `OTEL_EXPORTER_OTLP_METRICS_PROTOCOL` | _(unset)_ | Same check. This wins over `OTEL_EXPORTER_OTLP_PROTOCOL`. |
+| `OTEL_METRICS_EXPORTER` | _(unset)_ | `otlp` or unset exports when an endpoint is set. `none` turns export off. |
+| `OTEL_SDK_DISABLED` | _(unset)_ | `true` turns export off. |
+| `OTEL_SERVICE_NAME` | `image-proxy` | `service.name` on the exported resource. |
+| `OTEL_RESOURCE_ATTRIBUTES` | _(unset)_ | Extra resource attributes (`key=value`, comma-separated). |
+| `OTEL_EXPORTER_OTLP_HEADERS` | _(unset)_ | Headers for the collector. `OTEL_EXPORTER_OTLP_METRICS_HEADERS` wins when set. |
+| `OTEL_EXPORTER_OTLP_TIMEOUT` | `10000` | Export timeout in milliseconds. `OTEL_EXPORTER_OTLP_METRICS_TIMEOUT` wins when set. |
+| `DEPLOYMENT_ENVIRONMENT` | _(unset)_ | Sets `deployment.environment.name` when present. |
+
 ## S3
 
 Set `IMAGE_PROXY_S3_BUCKET` to mount one bucket as the image store. Requests are served from that bucket, and `PUT` writes into it when an upload token is configured. `IMAGE_PROXY_ROOT_PATH` is not read for image bytes while a bucket is mounted. One process mounts one bucket; use `IMAGE_PROXY_S3_PREFIX` as the directory inside it.

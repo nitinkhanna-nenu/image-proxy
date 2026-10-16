@@ -322,9 +322,11 @@ pub async fn process_image_request(
         let result_image_bytes = web::block(move || -> anyhow::Result<Vec<u8>> {
             let image = {
                 // Decode labeled by input format; encode uses output format in the pipeline.
-                let _timer = pipeline_duration
-                    .with_label_values(&["decode", &input_format])
-                    .start_timer();
+                let _timer = crate::metrics::start_step(
+                    &pipeline_duration,
+                    crate::metrics::PipelineStep::Decode,
+                    &input_format,
+                );
                 crate::utils::decode::decode_image(&image_bytes, config_for_pipeline.get_ref())?
             };
             let bytes = crate::operations::pipeline::image_pipeline(

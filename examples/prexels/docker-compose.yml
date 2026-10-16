@@ -11,6 +11,9 @@ services:
       context: ../..
       dockerfile: Dockerfile
       target: runtime
+      args:
+        # Set to "" to build the image without OpenTelemetry.
+        CARGO_FEATURES: otel
     image: prexels-image-proxy:local
     ports:
       # Host port. The process listens on IMAGE_PROXY_BIND_ADDRESS (0.0.0.0:8000).

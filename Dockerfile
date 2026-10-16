@@ -32,18 +32,30 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM chef AS builder
 COPY --from=planner /app/recipe.json recipe.json
 
+# `otel` compiles in OpenTelemetry export. Pass --build-arg CARGO_FEATURES=
+# to leave it out. An empty value builds the image without that feature.
+ARG CARGO_FEATURES=otel
+
 # Copy the local path dependencies needed by [patch.crates-io] and foyer
 COPY image/ image/
 COPY foyer/ foyer/
 
 # Build dependencies - this is the caching Docker layer!
-RUN cargo chef cook --release --recipe-path recipe.json
+RUN if [ -n "$CARGO_FEATURES" ]; then \
+      cargo chef cook --release --features "$CARGO_FEATURES" --recipe-path recipe.json; \
+    else \
+      cargo chef cook --release --recipe-path recipe.json; \
+    fi
 
 # Build application
 COPY Cargo.toml Cargo.lock ./
 COPY src/ src/
 COPY tests/ tests/
-RUN cargo build --locked --release && \
+RUN if [ -n "$CARGO_FEATURES" ]; then \
+      cargo build --locked --release --features "$CARGO_FEATURES"; \
+    else \
+      cargo build --locked --release; \
+    fi && \
     cp ./target/release/image-proxy /bin/image-proxy
 
 ################################################################################

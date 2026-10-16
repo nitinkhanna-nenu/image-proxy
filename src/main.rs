@@ -28,6 +28,7 @@ use image_proxy::{
 #[hotpath::main]
 async fn main() -> anyhow::Result<()> {
     image_proxy::logs::setup_tracing();
+    let otel_metrics = image_proxy::otel::install();
     let config = Arc::new(EncodingConfig::from_env());
     let store = image_proxy::storage::ImageStore::from_env(&config.root_path)?;
     let upload_auth = image_proxy::api::upload::UploadAuth::from_env()?;
@@ -62,6 +63,10 @@ async fn main() -> anyhow::Result<()> {
     .bind(std::env::var("IMAGE_PROXY_BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:8000".to_string()))?
     .run()
     .await?;
+
+    if let Some(exporter) = otel_metrics {
+        exporter.shutdown();
+    }
 
     Ok(())
 }

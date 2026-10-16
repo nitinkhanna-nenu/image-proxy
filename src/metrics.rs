@@ -101,6 +101,51 @@ impl RejectFormat {
     }
 }
 
+/// Closed vocabulary for the pipeline `step` label.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PipelineStep {
+    Decode,
+    Resize,
+    Bw,
+    Encode,
+}
+
+impl PipelineStep {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Decode => "decode",
+            Self::Resize => "resize",
+            Self::Bw => "bw",
+            Self::Encode => "encode",
+        }
+    }
+}
+
+/// Prometheus step timer. On drop it also records the same elapsed time for OpenTelemetry.
+pub(crate) struct StepTimer {
+    _prometheus: prometheus::HistogramTimer,
+    start: Instant,
+    step: PipelineStep,
+    format: String,
+}
+
+impl Drop for StepTimer {
+    fn drop(&mut self) {
+        crate::otel::record_step(self.step, &self.format, self.start.elapsed());
+    }
+}
+
+pub(crate) fn start_step(hist: &HistogramVec, step: PipelineStep, format: &str) -> StepTimer {
+    StepTimer {
+        _prometheus: hist
+            .with_label_values(&[step.as_str(), format])
+            .start_timer(),
+        start: Instant::now(),
+        step,
+        format: format.to_string(),
+    }
+}
+
 pub fn setup_metrics() -> (Registry, AppMetrics) {
     let prometheus_registry = Registry::new();
 
@@ -206,6 +251,7 @@ pub struct RequestTracker {
 impl RequestTracker {
     pub fn new(metrics: AppMetrics) -> Self {
         metrics.in_flight.inc();
+        crate::otel::add_in_flight(1);
         Self {
             metrics,
             start: Instant::now(),
@@ -252,7 +298,9 @@ impl RequestTracker {
         }
         self.finished = true;
         self.metrics.in_flight.dec();
+        crate::otel::add_in_flight(-1);
 
+        let elapsed = self.start.elapsed();
         let labels = &[
             self.format.as_str(),
             self.status.as_str(),
@@ -262,7 +310,14 @@ impl RequestTracker {
         self.metrics
             .request_duration
             .with_label_values(labels)
-            .observe(self.start.elapsed().as_secs_f64());
+            .observe(elapsed.as_secs_f64());
+        crate::otel::record_request(
+            self.format.as_str(),
+            self.status,
+            self.path,
+            self.bytes,
+            elapsed,
+        );
 
         if self.bytes > 0 && self.status == RequestStatus::Ok {
             self.metrics

@@ -4,6 +4,9 @@ services:
       context: .
       dockerfile: Dockerfile
       target: runtime
+      args:
+        # Set to "" to build the image without OpenTelemetry.
+        CARGO_FEATURES: otel
     ports:
       - "8000:8000"
     volumes:
