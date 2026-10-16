@@ -59,7 +59,9 @@ ARG UID=1000
 # jemalloc: full-process allocator via LD_PRELOAD (Rust + native codecs).
 # Returns free pages after concurrent image encode/decode free storms more
 # aggressively than the system multi-arena malloc.
-RUN apk add --no-cache libdav1d libgcc libjxl jemalloc
+# ca-certificates: S3 and other outbound HTTPS load the system trust store.
+# On Alpine that file is /etc/ssl/cert.pem.
+RUN apk add --no-cache libdav1d libgcc libjxl jemalloc ca-certificates
 
 RUN adduser \
     --disabled-password \
@@ -69,6 +71,11 @@ RUN adduser \
     --no-create-home \
     --uid "${UID}" \
     appuser
+
+# Local originals and an optional disk cache. Bind mounts replace these.
+# The cache directory must stay writable by uid 1000 when disk cache is on.
+RUN mkdir -p /app/data /var/cache/image-proxy \
+    && chown appuser:appuser /app/data /var/cache/image-proxy
 
 # Drop privileges for runtime.
 USER appuser

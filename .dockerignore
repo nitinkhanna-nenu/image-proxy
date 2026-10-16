@@ -20,3 +20,8 @@ LICENSE
 # Editor/IDE
 .vscode/
 .idea/
+
+# Local tooling and docs dependencies. Not used by the image build.
+.serena/
+docs/node_modules/
+docs/.next/

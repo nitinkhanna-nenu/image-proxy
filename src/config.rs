@@ -71,6 +71,10 @@ pub struct EncodingConfig {
     /// Maximum allowed on-disk source file size in bytes. Files larger than this are rejected
     /// before being read into memory. `None` disables the check.
     pub max_source_size: Option<usize>,
+    /// Origin that receives API requests this proxy does not handle as images.
+    pub backend_url: Option<String>,
+    /// Total time to wait for the backend to respond.
+    pub backend_timeout: std::time::Duration,
 }
 
 impl EncodingConfig {
@@ -174,6 +178,16 @@ impl EncodingConfig {
                 .filter(|s| !s.is_empty())
                 .and_then(|s| s.parse::<usize>().ok())
                 .and_then(|v| if v == 0 { None } else { Some(v) }),
+            backend_url: std::env::var("IMAGE_PROXY_BACKEND_URL")
+                .ok()
+                .map(|value| value.trim().to_string())
+                .filter(|value| !value.is_empty()),
+            backend_timeout: std::env::var("IMAGE_PROXY_BACKEND_TIMEOUT")
+                .ok()
+                .and_then(|value| value.parse::<u64>().ok())
+                .filter(|secs| *secs > 0)
+                .map(std::time::Duration::from_secs)
+                .unwrap_or(std::time::Duration::from_secs(30)),
         }
     }
 }
@@ -209,6 +223,8 @@ impl Default for EncodingConfig {
             preferred_formats: None,
             max_dimension: Some(8192),
             max_source_size: Some(100 * 1024 * 1024),
+            backend_url: None,
+            backend_timeout: std::time::Duration::from_secs(30),
         }
     }
 }

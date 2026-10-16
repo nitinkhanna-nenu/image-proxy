@@ -45,6 +45,8 @@ Use `--release` for any performance testing — debug AVIF/JXL encoding is extre
 Request flow: actix-web server ([src/main.rs](src/main.rs)) → handler [src/api/image.rs](src/api/image.rs) → path/format validation → cache lookup → pass-through OR decode/transform/encode pipeline ([src/operations/](src/operations/)) → cache store → response. `/metrics` is served by [src/api/metrics.rs](src/api/metrics.rs).
 
 - [src/config.rs](src/config.rs) — `EncodingConfig::from_env()` reads all `IMAGE_PROXY_*` env vars. Add new tunables here. Reference: [configuration docs](docs/content/docs/configuration.mdx).
+- [src/storage.rs](src/storage.rs) — image origin: local `root_path`, or one mounted S3 bucket (`IMAGE_PROXY_S3_*`, including a security/session token). `PUT` stores into that mount only when `IMAGE_PROXY_UPLOAD_TOKEN` is set.
+- [src/api/proxy.rs](src/api/proxy.rs) — when `IMAGE_PROXY_BACKEND_URL` is set, non-image requests are forwarded to that origin. Image `GET`/`PUT` and `/metrics` stay local.
 - [src/cache.rs](src/cache.rs) — hybrid memory/disk cache via `foyer`; disabled by default, returns `Option`.
 - [src/operations/format.rs](src/operations/format.rs) — encoders (AVIF/JPEG/PNG/WebP/JXL); [resize.rs](src/operations/resize.rs) — `ResizeAlgorithm`; [pipeline.rs](src/operations/pipeline.rs) — orchestration.
 - [src/utils/path.rs](src/utils/path.rs) — path sanitization (directory-traversal prevention); [mime.rs](src/utils/mime.rs); [encoding.rs](src/utils/encoding.rs).
@@ -62,4 +64,4 @@ Request flow: actix-web server ([src/main.rs](src/main.rs)) → handler [src/api
 
 ## Tests
 
-Integration tests live in [tests/](tests/) (one file per concern: `basic_serving`, `transformations`, `security`, `headers`, `metrics`, `allowed_formats`, `auto_format`, `non_processable_formats`). Shared helpers are in [tests/common/mod.rs](tests/common/mod.rs) — use `test_config()`, `write_test_jpeg()` / `write_test_png_with_alpha()`, and `build_app_data()` to build an in-process app against a tempdir. Add security/path-traversal coverage in [tests/security.rs](tests/security.rs).
+Integration tests live in [tests/](tests/) (one file per concern: `basic_serving`, `transformations`, `security`, `headers`, `metrics`, `allowed_formats`, `auto_format`, `non_processable_formats`, `storage`, `backend`). Shared helpers are in [tests/common/mod.rs](tests/common/mod.rs) — use `test_config()`, `write_test_jpeg()` / `write_test_png_with_alpha()`, and `build_app_data()` to build an in-process app against a tempdir. Add security/path-traversal coverage in [tests/security.rs](tests/security.rs).

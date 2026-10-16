@@ -21,4 +21,5 @@ pub mod logs;
 pub mod metrics;
 pub mod operations;
 pub mod preferred_formats;
+pub mod storage;
 pub mod utils;

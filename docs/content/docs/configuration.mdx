@@ -11,15 +11,59 @@ All configuration is done through environment variables.
 | Variable                   | Default                 | Description                                                                                                                          |
 | -------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
 | `IMAGE_PROXY_BIND_ADDRESS` | `0.0.0.0:8000` | TCP address and port to listen on                                                                   |
-| `IMAGE_PROXY_ROOT_PATH`    | `/app/data`    | Root directory for serving image files                                                              |
+| `IMAGE_PROXY_ROOT_PATH`    | `/app/data`    | Root directory for serving image files. Unused for image bytes when an S3 bucket is mounted.        |
 | `IMAGE_PROXY_STRIP_PATH`   | _(unset)_      | Path prefix to strip from incoming requests. Useful when behind a reverse proxy that adds a prefix. |
 | `RUST_LOG`                 | `INFO`         | Log level (`TRACE`, `DEBUG`, `INFO`, `WARN`, `ERROR`)                                               |
+
+## S3
+
+Set `IMAGE_PROXY_S3_BUCKET` to mount one bucket as the image store. Requests are served from that bucket, and `PUT` writes into it when an upload token is configured. `IMAGE_PROXY_ROOT_PATH` is not read for image bytes while a bucket is mounted. One process mounts one bucket; use `IMAGE_PROXY_S3_PREFIX` as the directory inside it.
+
+Temporary credentials (STS) need the access key, the secret, and a security token. The security token is the AWS session token (`X-Amz-Security-Token`). Long-lived keys omit it. When no static keys are set, the process uses the default AWS credential chain (environment variables such as `AWS_ACCESS_KEY_ID` / `AWS_SESSION_TOKEN`, an IAM role, or a web identity token).
+
+| Variable                            | Default        | Description                                                                                          |
+| ----------------------------------- | -------------- | ---------------------------------------------------------------------------------------------------- |
+| `IMAGE_PROXY_S3_BUCKET`             | _(unset)_      | Bucket to mount. Unset keeps the local `IMAGE_PROXY_ROOT_PATH` directory.                           |
+| `IMAGE_PROXY_S3_REGION`             | `us-east-1`    | Bucket region. Falls back to `AWS_REGION`, then `AWS_DEFAULT_REGION`.                               |
+| `IMAGE_PROXY_S3_PREFIX`             | _(unset)_      | Key prefix inside the bucket. `albums` mounts `albums/<request path>`.                              |
+| `IMAGE_PROXY_S3_ENDPOINT`           | _(unset)_      | Custom endpoint for MinIO, LocalStack, or R2 (`https://...` or `http://...`).                       |
+| `IMAGE_PROXY_S3_ACCESS_KEY_ID`      | _(unset)_      | Access key id. Must be set together with the secret.                                                |
+| `IMAGE_PROXY_S3_SECRET_ACCESS_KEY`  | _(unset)_      | Secret access key.                                                                                   |
+| `IMAGE_PROXY_S3_SECURITY_TOKEN`     | _(unset)_      | Security token for temporary credentials. `IMAGE_PROXY_S3_SESSION_TOKEN` is an alias.               |
+| `IMAGE_PROXY_S3_PATH_STYLE`         | endpoint-based | `true` uses path-style URLs (`endpoint/bucket/key`). Defaults to `true` when an endpoint is set.    |
+| `IMAGE_PROXY_UPLOAD_TOKEN`          | _(unset)_      | Bearer token required by `PUT /{filename}`. Unset disables uploads. A single token, no whitespace.  |
+
+The mounted credentials need `s3:GetObject` and `s3:HeadObject` to serve images, and `s3:PutObject` to store them. Secrets are not written to logs.
+
+```bash
+IMAGE_PROXY_S3_BUCKET=photos \
+IMAGE_PROXY_S3_REGION=eu-west-1 \
+IMAGE_PROXY_S3_PREFIX=originals \
+IMAGE_PROXY_S3_ACCESS_KEY_ID=AKIA... \
+IMAGE_PROXY_S3_SECRET_ACCESS_KEY=... \
+IMAGE_PROXY_S3_SECURITY_TOKEN=... \
+IMAGE_PROXY_UPLOAD_TOKEN=choose-a-long-random-token \
+cargo run --release
+```
+
+## Backend
+
+Set `IMAGE_PROXY_BACKEND_URL` to forward API calls that are not images. `GET` and `PUT` of a supported image path still use the mounted store. `/metrics` stays on this process. Every other method and path is sent to the backend with the original method, path, query, headers, and body. Redirects are returned to the caller.
+
+A prefix on the backend URL is prepended. `https://api.internal/svc` plus `POST /api/items` becomes `POST https://api.internal/svc/api/items`. `IMAGE_PROXY_STRIP_PATH` is removed first, the same way it is for images.
+
+| Variable                     | Default | Description                                                                                          |
+| ---------------------------- | ------- | ---------------------------------------------------------------------------------------------------- |
+| `IMAGE_PROXY_BACKEND_URL`    | _(unset)_ | Backend origin (`https://api.internal` or `https://api.internal/svc`). Unset disables passthrough. |
+| `IMAGE_PROXY_BACKEND_TIMEOUT`| `30`    | Seconds to wait for the backend response.                                                            |
+
+The URL must be `http` or `https`, with a host and no user info, query, or fragment. Paths that contain `..` are refused. The caller's `Authorization` header is forwarded; put TLS in front of an `http://` backend.
 
 ## Fallback
 
 | Variable                              | Default                 | Description                                                                                                                                  |
 | ------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `IMAGE_PROXY_FALLBACK_IMAGE_URL`      | _(unset)_               | Base URL for fetching images not found on disk (e.g., `https://cdn.example.com/images/`)                                                     |
+| `IMAGE_PROXY_FALLBACK_IMAGE_URL`      | _(unset)_               | Base URL for fetching images not found in the mounted store (e.g., `https://cdn.example.com/images/`)                                        |
 | `IMAGE_PROXY_FALLBACK_IMAGE_MAX_SIZE` | `5242880` (5 MB)        | Maximum size in bytes for fallback image responses. Prevents excessive memory usage.                                                         |
 | `IMAGE_PROXY_USER_AGENT`              | `image-proxy/<version>` | `User-Agent` header sent when fetching fallback images from an upstream. Loaded into `EncodingConfig`; empty/whitespace falls back to default. |
 

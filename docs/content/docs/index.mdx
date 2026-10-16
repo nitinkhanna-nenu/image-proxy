@@ -24,6 +24,8 @@ icon: BookOpen
 docker run -p 8000:8000 -v /path/to/images:/app/data ghcr.io/stax124/image-proxy:latest
 ```
 
+S3, upload, and API passthrough settings are environment variables. See [Installation](./installation) and `examples/prexels/` for a sample deployment.
+
 ```
 GET /photos/sample.jpg               # serve original
 GET /photos/sample.jpg?size=400      # resize to fit 400×400 box (keeps the aspect ratio)

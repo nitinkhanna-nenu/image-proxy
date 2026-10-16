@@ -5,15 +5,12 @@ use crate::{
     metrics::{AppMetrics, RejectFormat, RequestPath, RequestStatus, RequestTracker},
     operations::resize::ResizeAlgorithm,
     preferred_formats::get_preferred_format,
-    utils::{
-        PathValidationError, load_bytes_from_disk, mime_type_for_format, sanitize_and_validate_path,
-    },
+    storage::ImageStore,
+    utils::{PathValidationError, mime_type_for_format, sanitize_and_validate_path},
 };
 use actix_web::{HttpMessage, HttpRequest, HttpResponse, web};
 use bytes::Bytes;
 use foyer::HybridCache;
-use futures_util::TryStreamExt;
-use tokio_util::io::ReaderStream;
 
 /// List of formats that we allow through, but we cannot process them. Developers should only mount image directories to
 /// this container, but some paths may still point to images in unsupported formats. This should make transitioning easier and allow for more flexible configurations
@@ -22,7 +19,7 @@ const NON_PROCESSABLE_FORMATS: &[&str] = &["svg", "ico", "gif", "bmp", "tiff", "
 
 /// List of formats that we support as input. Used to validate incoming requests early and reject unsupported formats
 /// before doing any expensive work. Includes non-processable formats as well, they will be filtered out later in the pipeline.
-const SUPPORTED_INPUT_FORMATS: &[&str] = &[
+pub(crate) const SUPPORTED_INPUT_FORMATS: &[&str] = &[
     "avif", "jpeg", "jpg", "png", "webp", "svg", "ico", "gif", "bmp", "tiff", "jxl",
 ];
 
@@ -34,6 +31,12 @@ pub fn add_headers_for_caching(
     if !config.cache_control_header.is_empty() {
         response.insert_header(("Cache-Control", config.cache_control_header.clone()));
     }
+}
+
+fn resolve_store(req: &HttpRequest, root_path: &str) -> ImageStore {
+    req.app_data::<web::Data<ImageStore>>()
+        .map(|data| data.get_ref().clone())
+        .unwrap_or_else(|| ImageStore::local(root_path))
 }
 
 #[actix_web::get("/{filename:.*}")]
@@ -85,11 +88,13 @@ pub async fn process_image_request(
         .headers()
         .get("Sec-CH-DPR")
         .and_then(|v| v.to_str().ok());
+    let store = resolve_store(&req, &config.root_path);
 
     tracing::debug!(
         query_params = ?query_params,
         strip_path = ?config.strip_path,
         root_path = ?config.root_path,
+        store = %store,
         sanitized_path = ?sanitized_path,
         sanitized_disk_path = ?sanitized_disk_path,
         filename = ?filename,
@@ -179,130 +184,124 @@ pub async fn process_image_request(
         }
     }
 
-    // Stream local files directly when no transformation is requested.
-    if query_params.is_empty()
-        && sanitized_disk_path.exists()
-        && file_ext.as_deref() == Some(effective_format.as_str())
-    {
-        let content_type = mime_type_for_format(file_ext.as_deref());
+    // Stream the original bytes when no transformation is requested and the
+    // stored format already matches. Local files and S3 objects both stream;
+    // nothing is decoded.
+    let can_pass_through =
+        query_params.is_empty() && file_ext.as_deref() == Some(effective_format.as_str());
 
-        let metadata = tokio::fs::metadata(&sanitized_disk_path)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to read file metadata: {}", e);
-                tracker.fail(RequestPath::PassThrough, RequestStatus::Error);
-                actix_web::error::ErrorInternalServerError("Failed to read file metadata")
-            })?;
-        let size = metadata.len();
-
-        let file = tokio::fs::File::open(&sanitized_disk_path)
-            .await
-            .map_err(|e| {
-                tracing::error!("Failed to open file: {}", e);
-                tracker.fail(RequestPath::PassThrough, RequestStatus::Error);
-                actix_web::error::ErrorInternalServerError("Failed to open file")
-            })?;
-        let stream = ReaderStream::new(file).map_err(actix_web::error::ErrorInternalServerError);
-
-        tracker.ok(RequestPath::PassThrough, size);
-        let mut builder = HttpResponse::Ok();
-        builder.content_type(content_type);
-        builder.insert_header(("Content-Length", size.to_string()));
-        add_headers_for_caching(&mut builder, &config);
-        return Ok(builder.streaming(stream));
-    }
-
-    let mut image_bytes: Bytes;
-    let mut from_fallback = false;
-    if !sanitized_disk_path.exists() {
-        // If the file doesn't exist, check if a fallback image URL is configured
-        if config
-            .fallback_image_url
-            .as_ref()
-            .is_some_and(|s| !s.is_empty())
-        {
-            from_fallback = true;
-            let url = match &config.fallback_image_url {
-                Some(base_url) => format!("{}{}", base_url, sanitized_path.display()),
-                None => sanitized_path.display().to_string(),
-            };
-
-            let mut upstream_response = http_client.get(&url).send().await.map_err(|e| {
-                tracing::debug!("Failed to fetch fallback image: {}", e);
-                tracker.fail(RequestPath::Fallback, RequestStatus::BadGateway);
-                actix_web::error::ErrorBadGateway("Failed to fetch fallback image")
-            })?;
-
-            if !upstream_response.status().is_success() {
-                tracing::debug!(
-                    "Failed to fetch fallback image, status: {}",
-                    upstream_response.status()
-                );
-                tracker.fail(RequestPath::Fallback, RequestStatus::BadGateway);
-                return Err(actix_web::error::InternalError::new(
-                    "Failed to fetch fallback image",
-                    upstream_response.status(),
-                )
-                .into());
-            }
-
-            let content_type = upstream_response.content_type();
-            let parsed_format = content_type
-                .split('/')
-                .nth(1)
-                .and_then(|s| s.split(';').next())
-                .map(|s| s.trim().to_lowercase())
-                .unwrap_or_else(|| "".to_string());
-
-            // If the upstream fallback image is in the same format as the requested format and no transformations
-            // are requested, we can directly stream it without loading it into memory
-            if query_params.is_empty() && parsed_format == effective_format {
-                // Content-Length unknown for streaming fallback; bytes counter skipped.
-                tracker.ok(RequestPath::Fallback, 0);
+    let loaded = if can_pass_through {
+        match store.open(&sanitized_path).await {
+            Ok(Some(opened)) => {
+                tracker.ok(RequestPath::PassThrough, opened.size);
                 let mut builder = HttpResponse::Ok();
                 builder.content_type(content_type);
+                builder.insert_header(("Content-Length", opened.size.to_string()));
                 add_headers_for_caching(&mut builder, &config);
-                return Ok(builder.streaming(upstream_response));
+                return Ok(builder.streaming(opened.stream));
             }
-
-            // Otherwise, attempt to load the fallback image and apply transformations to it
-            image_bytes = upstream_response
-                .body()
-                .limit(config.fallback_image_max_size)
-                .await
-                .map_err(|e| {
-                    tracing::debug!("Failed to read fallback image body: {}", e);
-                    tracker.fail(RequestPath::Fallback, RequestStatus::BadGateway);
-                    actix_web::error::ErrorBadGateway("Failed to read fallback image body")
-                })?;
-        } else {
-            tracker.set_format(ext.clone());
-            tracker.fail(RequestPath::NotFound, RequestStatus::NotFound);
-            return Ok(HttpResponse::NotFound().body("File not found"));
+            Ok(None) => None,
+            Err(e) => {
+                tracing::error!("Failed to open file: {}", e);
+                tracker.fail(RequestPath::PassThrough, RequestStatus::Error);
+                return Err(actix_web::error::ErrorInternalServerError(
+                    "Failed to open file",
+                ));
+            }
         }
     } else {
-        // Load the original file bytes from disk
-        let path = sanitized_disk_path.clone();
         let path_if_load_fails = if is_non_processable {
             RequestPath::NonProcessable
         } else {
             RequestPath::Transform
         };
-        let max_source_size = config.max_source_size;
-        image_bytes = load_bytes_from_disk(&path, max_source_size)
+        match store.load(&sanitized_path, config.max_source_size).await {
+            Ok(bytes) => Some(bytes),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) if e.kind() == std::io::ErrorKind::FileTooLarge => {
+                tracing::warn!("Source file exceeds configured size limit");
+                tracker.fail(path_if_load_fails, RequestStatus::Error);
+                return Err(actix_web::error::ErrorPayloadTooLarge(
+                    "Source file too large",
+                ));
+            }
+            Err(e) => {
+                tracing::error!("Failed to read file: {}", e);
+                tracker.fail(path_if_load_fails, RequestStatus::Error);
+                return Err(actix_web::error::ErrorInternalServerError(
+                    "Failed to read file",
+                ));
+            }
+        }
+    };
+
+    let mut image_bytes: Bytes;
+    let mut from_fallback = false;
+    if let Some(bytes) = loaded {
+        image_bytes = bytes;
+    } else if config
+        .fallback_image_url
+        .as_ref()
+        .is_some_and(|s| !s.is_empty())
+    {
+        from_fallback = true;
+        let url = match &config.fallback_image_url {
+            Some(base_url) => format!("{}{}", base_url, sanitized_path.display()),
+            None => sanitized_path.display().to_string(),
+        };
+
+        let mut upstream_response = http_client.get(&url).send().await.map_err(|e| {
+            tracing::debug!("Failed to fetch fallback image: {}", e);
+            tracker.fail(RequestPath::Fallback, RequestStatus::BadGateway);
+            actix_web::error::ErrorBadGateway("Failed to fetch fallback image")
+        })?;
+
+        if !upstream_response.status().is_success() {
+            tracing::debug!(
+                "Failed to fetch fallback image, status: {}",
+                upstream_response.status()
+            );
+            tracker.fail(RequestPath::Fallback, RequestStatus::BadGateway);
+            return Err(actix_web::error::InternalError::new(
+                "Failed to fetch fallback image",
+                upstream_response.status(),
+            )
+            .into());
+        }
+
+        let content_type = upstream_response.content_type();
+        let parsed_format = content_type
+            .split('/')
+            .nth(1)
+            .and_then(|s| s.split(';').next())
+            .map(|s| s.trim().to_lowercase())
+            .unwrap_or_else(|| "".to_string());
+
+        // If the upstream fallback image is in the same format as the requested format and no transformations
+        // are requested, we can directly stream it without loading it into memory
+        if query_params.is_empty() && parsed_format == effective_format {
+            // Content-Length unknown for streaming fallback; bytes counter skipped.
+            tracker.ok(RequestPath::Fallback, 0);
+            let mut builder = HttpResponse::Ok();
+            builder.content_type(content_type);
+            add_headers_for_caching(&mut builder, &config);
+            return Ok(builder.streaming(upstream_response));
+        }
+
+        // Otherwise, attempt to load the fallback image and apply transformations to it
+        image_bytes = upstream_response
+            .body()
+            .limit(config.fallback_image_max_size)
             .await
             .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::FileTooLarge {
-                    tracing::warn!("Source file exceeds configured size limit");
-                    tracker.fail(path_if_load_fails, RequestStatus::Error);
-                    actix_web::error::ErrorPayloadTooLarge("Source file too large")
-                } else {
-                    tracing::error!("Failed to read file: {}", e);
-                    tracker.fail(path_if_load_fails, RequestStatus::Error);
-                    actix_web::error::ErrorInternalServerError("Failed to read file")
-                }
-            })?
-            .into();
+                tracing::debug!("Failed to read fallback image body: {}", e);
+                tracker.fail(RequestPath::Fallback, RequestStatus::BadGateway);
+                actix_web::error::ErrorBadGateway("Failed to read fallback image body")
+            })?;
+    } else {
+        tracker.set_format(ext.clone());
+        tracker.fail(RequestPath::NotFound, RequestStatus::NotFound);
+        return Ok(HttpResponse::NotFound().body("File not found"));
     }
 
     // path label for the load/transform/non-processable terminal (not cache/pass-through/reject).

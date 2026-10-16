@@ -28,6 +28,8 @@ pub enum RequestPath {
     Fallback,
     FallbackTransform,
     NotFound,
+    Store,
+    Backend,
     Unknown,
 }
 
@@ -42,6 +44,8 @@ impl RequestPath {
             Self::Fallback => "fallback",
             Self::FallbackTransform => "fallback_transform",
             Self::NotFound => "not_found",
+            Self::Store => "store",
+            Self::Backend => "backend",
             Self::Unknown => "unknown",
         }
     }
@@ -55,6 +59,9 @@ pub enum RequestStatus {
     UnsupportedMediaType,
     Error,
     BadGateway,
+    Unauthorized,
+    Forbidden,
+    BadRequest,
 }
 
 impl RequestStatus {
@@ -65,6 +72,9 @@ impl RequestStatus {
             Self::UnsupportedMediaType => "unsupported_media_type",
             Self::Error => "error",
             Self::BadGateway => "bad_gateway",
+            Self::Unauthorized => "unauthorized",
+            Self::Forbidden => "forbidden",
+            Self::BadRequest => "bad_request",
         }
     }
 }

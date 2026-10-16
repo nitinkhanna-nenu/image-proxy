@@ -14,6 +14,16 @@ docker compose up
 
 The runtime image installs **jemalloc** and sets `LD_PRELOAD` / `MALLOC_CONF` so all allocations (including native image codecs) use jemalloc. This keeps post-load RSS from remaining inflated after concurrent transforms. See [Development](./development#memory-allocator-jemalloc) for the same env vars when running a local binary.
 
+The image also installs CA certificates so S3 and other outbound HTTPS can use the system trust store. Configuration stays in the environment. Copy `.env.template` to `.env` when you build with the repository `compose.yml`. That file is where `IMAGE_PROXY_S3_*`, `IMAGE_PROXY_UPLOAD_TOKEN`, and `IMAGE_PROXY_BACKEND_URL` belong.
+
+`examples/prexels/` is a sample deployment: one S3 bucket for originals, a bearer token for `PUT`, and API passthrough for every other path.
+
+```bash
+cp examples/prexels/.env.example examples/prexels/.env
+# fill in the bucket, upload token, and backend URL
+examples/prexels/deploy.sh
+```
+
 ## Building from Source
 
 ### Prerequisites

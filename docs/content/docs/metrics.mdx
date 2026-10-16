@@ -36,13 +36,15 @@ Tracks the total number of image requests, labeled by output format, result stat
 | Value                | Meaning                                                          |
 | -------------------- | ---------------------------------------------------------------- |
 | `cache_hit`          | Served from the response cache                                   |
-| `pass_through`       | Local file streamed without decode/transform                     |
+| `pass_through`       | Mounted object streamed without decode/transform                 |
 | `transform`          | Decode + optional resize/BW + encode                             |
 | `non_processable`    | Allowed but non-re-encodable format (svg, gif, …) streamed as-is |
 | `fallback`           | Served from `IMAGE_PROXY_FALLBACK_IMAGE_URL` without transform   |
 | `fallback_transform` | Fallback origin bytes then transform                             |
 | `not_found`          | Missing file and no usable fallback                              |
 | `rejected`           | Validation failure (bad/disallowed format)                       |
+| `store`              | `PUT` into the mounted store                                     |
+| `backend`            | Non-image API request forwarded to `IMAGE_PROXY_BACKEND_URL`     |
 | `unknown`            | Should not appear for completed handlers                         |
 
 **Example queries:**

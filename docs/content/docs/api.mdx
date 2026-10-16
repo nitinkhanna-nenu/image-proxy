@@ -10,7 +10,7 @@ icon: Route
 GET /{filename}
 ```
 
-Serves an image from the configured root path, optionally applying transformations. The `filename` supports nested paths (e.g., `photos/2024/sample.jpg`).
+Serves an image from the mounted store (the local root directory, or the configured S3 bucket), optionally applying transformations. The `filename` supports nested paths (e.g., `photos/2024/sample.jpg`).
 
 ### Query Parameters
 
@@ -78,10 +78,52 @@ curl -H "Sec-CH-DPR: 2.0" http://localhost:8000/photo.jpg?size=400
 - **No transformation parameters** — The raw file is streamed directly without decoding or re-encoding.
 - **Non-processable format** (SVG, ICO, GIF, BMP, TIFF, JXL) — The file is served as-is without processing, even if transformation parameters are present.
 - **With transformations** — The image is decoded, processed through the pipeline and the result is cached if caching is enabled.
+
+## Store an image
+
+```
+PUT /{filename}
+Authorization: Bearer <IMAGE_PROXY_UPLOAD_TOKEN>
+```
+
+Writes the request body into the mounted store at `filename` (the S3 key under `IMAGE_PROXY_S3_PREFIX`, or a file under `IMAGE_PROXY_ROOT_PATH`). The same path is what `GET` serves afterwards. Uploads are disabled, and this route responds `403`, until `IMAGE_PROXY_UPLOAD_TOKEN` is set.
+
+The path is sanitized the same way as `GET`: `..` segments are removed, so a request cannot write outside the mount. The extension must be one of the supported input formats. Replacing an object does not purge an already cached transformation of that path.
+
+| Code  | Meaning                                              |
+| ----- | ---------------------------------------------------- |
+| `201` | Object stored. `Location` is the sanitized path.     |
+| `400` | Empty body                                           |
+| `401` | Missing or wrong bearer token                        |
+| `403` | Uploads are disabled                                 |
+| `413` | Body exceeds `IMAGE_PROXY_MAX_SOURCE_SIZE`           |
+| `415` | Missing or unsupported file extension                |
+| `500` | The mounted store rejected the write                 |
+
+```bash
+curl -X PUT \
+  -H "Authorization: Bearer $IMAGE_PROXY_UPLOAD_TOKEN" \
+  --data-binary @photo.jpg \
+  http://localhost:8000/albums/photo.jpg
+```
 - **File not found + fallback URL** — The image is fetched from the configured `IMAGE_PROXY_FALLBACK_IMAGE_URL`, transformed, and served. The response size is capped by `IMAGE_PROXY_FALLBACK_IMAGE_MAX_SIZE`.
 - **File not found + no fallback** — Returns `404 Not Found`.
 
 ---
+
+## Backend passthrough
+
+When `IMAGE_PROXY_BACKEND_URL` is set, a request that is not an image and not `GET /metrics` is forwarded to that origin.
+
+```bash
+curl -X POST \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"Ada"}' \
+  http://localhost:8000/api/items
+```
+
+`GET /photo.jpg` and `PUT /photo.jpg` are not forwarded. A backend that cannot be reached responds `502`. A path containing `..` responds `400`.
 
 ## Metrics Endpoint
 

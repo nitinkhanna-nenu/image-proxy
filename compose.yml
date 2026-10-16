@@ -7,6 +7,10 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      # Local originals. Image bytes come from S3 instead when IMAGE_PROXY_S3_BUCKET is set.
       - ./data/images:/app/data/images
+      # Uncomment with IMAGE_PROXY_ENABLE_DISK_CACHE=true. The directory must be writable by uid 1000.
+      # - ./cache:/var/cache/image-proxy
     env_file:
+      # Copy .env.template to .env. S3 keys, the upload token, and the backend URL belong here.
       - .env

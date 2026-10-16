@@ -1,0 +1,20 @@
+# Sample deployment for Prexels.
+# Originals live in one S3 bucket. PUT writes them when IMAGE_PROXY_UPLOAD_TOKEN is set.
+# Any request that is not an image, and not /metrics, is forwarded to IMAGE_PROXY_BACKEND_URL.
+# Start it with ./deploy.sh from this directory.
+
+name: prexels
+
+services:
+  image-proxy:
+    build:
+      context: ../..
+      dockerfile: Dockerfile
+      target: runtime
+    image: prexels-image-proxy:local
+    ports:
+      # Host port. The process listens on IMAGE_PROXY_BIND_ADDRESS (0.0.0.0:8000).
+      - "8000:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
