@@ -30,11 +30,31 @@ async fn main() -> anyhow::Result<()> {
     image_proxy::logs::setup_tracing();
     let otel_metrics = image_proxy::otel::install();
     let config = Arc::new(EncodingConfig::from_env());
-    let store = image_proxy::storage::ImageStore::from_env(&config.root_path)?;
+    let mounted = image_proxy::storage::ImageStore::from_env(&config.root_path)?;
     let upload_auth = image_proxy::api::upload::UploadAuth::from_env()?;
-    tracing::info!(backend = %store, uploads = upload_auth.enabled(), "image store mounted");
     let (prometheus_registry, app_metrics) = image_proxy::metrics::setup_metrics();
-    let hybrid_cache = image_proxy::cache::setup_cache(&config, &prometheus_registry).await?;
+    let (store, hybrid_cache) = match mounted {
+        image_proxy::storage::StoreSource::Ready(store) => {
+            let hybrid_cache =
+                image_proxy::cache::setup_cache(&config, &prometheus_registry).await?;
+            (store, hybrid_cache)
+        }
+        image_proxy::storage::StoreSource::Foyer => {
+            let origin =
+                image_proxy::cache::setup_origin_cache(&config, &prometheus_registry).await?;
+            let hybrid_cache = if config.enable_cache {
+                Some(origin.clone())
+            } else {
+                None
+            };
+            let store = image_proxy::storage::ImageStore::foyer(
+                origin,
+                image_proxy::cache::origin_capacity(&config),
+            );
+            (store, hybrid_cache)
+        }
+    };
+    tracing::info!(backend = %store, uploads = upload_auth.enabled(), "image store mounted");
     let payload_limit = image_proxy::api::upload::payload_limit(config.max_source_size);
     if let Some(url) = &config.backend_url {
         proxy::validate_backend_url(url)?;

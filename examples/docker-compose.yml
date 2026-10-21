@@ -8,13 +8,15 @@ services:
       - "8000:8000"
     volumes:
       # Replace the first part with the path to your local images directory.
-      # Image bytes come from S3 instead when IMAGE_PROXY_S3_BUCKET is set.
+      # Local originals when IMAGE_PROXY_STORAGE=volume (the default).
+      # Image bytes come from S3 when IMAGE_PROXY_STORAGE=s3, or from foyer when it is foyer.
       - ./images:/app/data
       # Uncomment with IMAGE_PROXY_ENABLE_DISK_CACHE=true. The directory must be writable by uid 1000.
       # - ./cache:/var/cache/image-proxy
     # Pass configuration in the environment. Do not bake secrets into the image.
     # See the configuration docs, .env.template, and examples/prexels/ for a full deployment.
     # environment:
+    #   IMAGE_PROXY_STORAGE: s3
     #   IMAGE_PROXY_S3_BUCKET: photos
     #   IMAGE_PROXY_S3_REGION: us-east-1
     #   IMAGE_PROXY_S3_PREFIX: originals

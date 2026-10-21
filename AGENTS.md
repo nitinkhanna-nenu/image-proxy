@@ -47,9 +47,9 @@ Use `--release` for any performance testing — debug AVIF/JXL encoding is extre
 Request flow: actix-web server ([src/main.rs](src/main.rs)) → handler [src/api/image.rs](src/api/image.rs) → path/format validation → cache lookup → pass-through OR decode/transform/encode pipeline ([src/operations/](src/operations/)) → cache store → response. `/metrics` is served by [src/api/metrics.rs](src/api/metrics.rs).
 
 - [src/config.rs](src/config.rs) — `EncodingConfig::from_env()` reads all `IMAGE_PROXY_*` env vars. Add new tunables here. Reference: [configuration docs](docs/content/docs/configuration.mdx).
-- [src/storage.rs](src/storage.rs) — image origin: local `root_path`, or one mounted S3 bucket (`IMAGE_PROXY_S3_*`, including a security/session token). `PUT` stores into that mount only when `IMAGE_PROXY_UPLOAD_TOKEN` is set.
+- [src/storage.rs](src/storage.rs) — image origin selected by `IMAGE_PROXY_STORAGE`: `volume` (`root_path`), `s3` (`IMAGE_PROXY_S3_*`, including a security/session token), or `foyer` (the hybrid cache). Unset storage with a set bucket still selects S3. `PUT` stores into that mount only when `IMAGE_PROXY_UPLOAD_TOKEN` is set.
 - [src/api/proxy.rs](src/api/proxy.rs) — when `IMAGE_PROXY_BACKEND_URL` is set, non-image requests are forwarded to that origin. Image `GET`/`PUT` and `/metrics` stay local.
-- [src/cache.rs](src/cache.rs) — hybrid memory/disk cache via `foyer`; disabled by default, returns `Option`.
+- [src/cache.rs](src/cache.rs) — hybrid memory/disk cache via `foyer`. Response caching is off unless `IMAGE_PROXY_ENABLE_CACHE=true`. `IMAGE_PROXY_STORAGE=foyer` uses one foyer instance as the image store and, when the response cache is on, as that cache too.
 - [src/operations/format.rs](src/operations/format.rs) — encoders (AVIF/JPEG/PNG/WebP/JXL); [resize.rs](src/operations/resize.rs) — `ResizeAlgorithm`; [pipeline.rs](src/operations/pipeline.rs) — orchestration.
 - [src/utils/path.rs](src/utils/path.rs) — path sanitization (directory-traversal prevention); [mime.rs](src/utils/mime.rs); [encoding.rs](src/utils/encoding.rs).
 - [src/otel/](src/otel/mod.rs) — OTLP metric export, compiled in with the `otel` Cargo feature. Same request values as Prometheus, bounded labels. With the feature, export stays off unless an `OTEL_EXPORTER_OTLP_*` endpoint is set.

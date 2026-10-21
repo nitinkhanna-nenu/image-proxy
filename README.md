@@ -13,7 +13,7 @@
 - Hybrid in-memory and disk response cache (via [foyer](https://github.com/foyer-rs/foyer))
 - Prometheus metrics endpoint (`/metrics`), and OpenTelemetry export when built with `--features otel`
 - Fallback image URL support (fetch from upstream when a file is not found in the mounted store)
-- S3 bucket as the backing store. Set `IMAGE_PROXY_S3_BUCKET` and the process serves images from that bucket instead of the local directory. One bucket per process, with static keys, a temporary security token, or the default AWS credential chain. `PUT` is token-gated
+- Image store selected with `IMAGE_PROXY_STORAGE`: `volume` (a mounted directory), `s3` (one bucket, with static keys, a temporary security token, or the default AWS credential chain), or `foyer` (the hybrid cache). `PUT` is token-gated
 - Forwards non-image API requests to a configured backend
 - Configurable via environment variables
 - Automatic `Vary: Sec-CH-DPR` header for proper CDN caching with device pixel ratio
@@ -25,7 +25,7 @@
 docker run -p 8000:8000 -v /path/to/images:/app/data ghcr.io/stax124/image-proxy:latest
 ```
 
-By default the server reads images from the directory mounted at `/app/data`. Set `IMAGE_PROXY_S3_BUCKET` to use one S3 bucket as the backing store instead. Image bytes then come from that bucket, and `IMAGE_PROXY_ROOT_PATH` is not used for them. A prefix (`IMAGE_PROXY_S3_PREFIX`) is the directory inside the bucket. Credentials are `IMAGE_PROXY_S3_ACCESS_KEY_ID` and `IMAGE_PROXY_S3_SECRET_ACCESS_KEY`, plus `IMAGE_PROXY_S3_SECURITY_TOKEN` for temporary credentials. Leave the keys unset to use the default AWS chain (IAM role, web identity, or `AWS_*` variables).
+By default the server reads images from the directory mounted at `/app/data` (`IMAGE_PROXY_STORAGE=volume`). Set `IMAGE_PROXY_STORAGE=s3` and `IMAGE_PROXY_S3_BUCKET` to serve one S3 bucket instead. A prefix (`IMAGE_PROXY_S3_PREFIX`) is the directory inside the bucket. Credentials are `IMAGE_PROXY_S3_ACCESS_KEY_ID` and `IMAGE_PROXY_S3_SECRET_ACCESS_KEY`, plus `IMAGE_PROXY_S3_SECURITY_TOKEN` for temporary credentials. Leave the keys unset to use the default AWS chain (IAM role, web identity, or `AWS_*` variables). Set `IMAGE_PROXY_STORAGE=foyer` to keep image bytes in the foyer cache. When `IMAGE_PROXY_STORAGE` is unset, a set `IMAGE_PROXY_S3_BUCKET` still selects S3.
 
 `examples/docker-compose.yml` is the local-directory setup. `examples/prexels/deploy.sh` is a sample that mounts one S3 bucket, accepts token-gated uploads, and forwards other API calls to a backend. Pass `IMAGE_PROXY_*` variables in the environment. Do not bake secrets into the image.
 

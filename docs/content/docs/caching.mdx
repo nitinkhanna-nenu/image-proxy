@@ -48,6 +48,10 @@ IMAGE_PROXY_ENABLE_DISK_CACHE=true
 
 The disk cache uses block-based storage with pre-allocated capacity. It persists across restarts and works best on SSD storage.
 
+## Foyer as the image store
+
+`IMAGE_PROXY_STORAGE=foyer` stores the original image bytes in this same cache. `IMAGE_PROXY_ENABLE_CACHE` still controls whether transformed responses are cached. With both enabled, originals and transformed responses share one foyer instance: originals are kept even when they exceed `IMAGE_PROXY_CACHE_MAX_ITEM_SIZE`, and transformed responses still obey that limit. See [Configuration](/docs/configuration#storage).
+
 ## Sizing Guidelines
 
 - **Memory cache**: Size based on your most frequently requested image variants. A 100 MB cache typically holds hundreds or even thousands of resized/converted images.

@@ -10,7 +10,8 @@ services:
     ports:
       - "8000:8000"
     volumes:
-      # Local originals. Image bytes come from S3 instead when IMAGE_PROXY_S3_BUCKET is set.
+      # Local originals when IMAGE_PROXY_STORAGE=volume (the default).
+      # Image bytes come from S3 when IMAGE_PROXY_STORAGE=s3, or from the foyer cache when it is foyer.
       - ./data/images:/app/data/images
       # Uncomment with IMAGE_PROXY_ENABLE_DISK_CACHE=true. The directory must be writable by uid 1000.
       # - ./cache:/var/cache/image-proxy

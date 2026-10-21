@@ -1,7 +1,10 @@
-//! Image bytes live either on the local filesystem or in one mounted S3 bucket.
+//! Image bytes live on a local volume, in one S3 bucket, or in a foyer cache.
 //!
-//! Credentials are read from the environment at startup and are not kept on
-//! [`crate::config::EncodingConfig`], whose `Debug` output shows up in logs.
+//! [`ImageStore::from_env`] reads `IMAGE_PROXY_STORAGE` (`volume`, `s3`, or `foyer`).
+//! When that variable is unset, a set `IMAGE_PROXY_S3_BUCKET` selects S3 and
+//! anything else stays on the local volume. Credentials are read from the
+//! environment at startup and are not kept on [`crate::config::EncodingConfig`],
+//! whose `Debug` output shows up in logs.
 
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
@@ -25,8 +28,24 @@ struct StoreInner {
 }
 
 enum StoreKind {
-    Local { root: PathBuf },
-    Object { store: Arc<dyn ObjectStore> },
+    Local {
+        root: PathBuf,
+    },
+    Object {
+        store: Arc<dyn ObjectStore>,
+    },
+    Foyer {
+        cache: foyer::HybridCache<String, Bytes>,
+        max_object_bytes: usize,
+    },
+}
+
+/// Where [`ImageStore::from_env`] decided image bytes live.
+pub enum StoreSource {
+    /// A local volume or an S3 bucket, ready to serve.
+    Ready(ImageStore),
+    /// `IMAGE_PROXY_STORAGE=foyer`. Build the cache, then wrap it with [`ImageStore::foyer`].
+    Foyer,
 }
 
 /// A pass-through body. The size is the object or file length, not a buffered copy.
@@ -61,13 +80,31 @@ impl ImageStore {
         }
     }
 
-    /// Mounts an S3 bucket when `IMAGE_PROXY_S3_BUCKET` is set. Otherwise the
-    /// store is the local `root_path` directory.
-    pub fn from_env(root_path: impl Into<PathBuf>) -> anyhow::Result<Self> {
+    /// Mounts the store selected by `IMAGE_PROXY_STORAGE`.
+    ///
+    /// `volume` uses `root_path`. `s3` uses `IMAGE_PROXY_S3_*`. `foyer` returns
+    /// [`StoreSource::Foyer`] so the caller can build the hybrid cache first.
+    /// When `IMAGE_PROXY_STORAGE` is unset, a set `IMAGE_PROXY_S3_BUCKET` selects
+    /// S3 and anything else selects the local volume.
+    pub fn from_env(root_path: impl Into<PathBuf>) -> anyhow::Result<StoreSource> {
         let root_path = root_path.into();
         match parse_mount(&env_value)? {
-            MountConfig::Local => Ok(Self::local(root_path)),
-            MountConfig::S3(settings) => connect_s3(settings),
+            MountConfig::Local => Ok(StoreSource::Ready(Self::local(root_path))),
+            MountConfig::S3(settings) => Ok(StoreSource::Ready(connect_s3(settings)?)),
+            MountConfig::Foyer => Ok(StoreSource::Foyer),
+        }
+    }
+
+    /// Image bytes live in `cache`. `max_object_bytes` is the largest object `put` accepts.
+    pub fn foyer(cache: foyer::HybridCache<String, Bytes>, max_object_bytes: usize) -> Self {
+        Self {
+            inner: Arc::new(StoreInner {
+                label: "foyer".to_string(),
+                kind: StoreKind::Foyer {
+                    cache,
+                    max_object_bytes,
+                },
+            }),
         }
     }
 
@@ -105,6 +142,7 @@ impl ImageStore {
         match &self.inner.kind {
             StoreKind::Local { root } => open_local(root, relative).await,
             StoreKind::Object { store } => open_object(store.as_ref(), relative).await,
+            StoreKind::Foyer { cache, .. } => open_foyer(cache, relative).await,
         }
     }
 
@@ -118,6 +156,7 @@ impl ImageStore {
                 Ok(Bytes::from(bytes))
             }
             StoreKind::Object { store } => load_object(store.as_ref(), relative, max).await,
+            StoreKind::Foyer { cache, .. } => load_foyer(cache, relative, max).await,
         }
     }
 
@@ -127,6 +166,10 @@ impl ImageStore {
         match &self.inner.kind {
             StoreKind::Local { root } => put_local(root, relative, &bytes).await,
             StoreKind::Object { store } => put_object(store.as_ref(), relative, bytes).await,
+            StoreKind::Foyer {
+                cache,
+                max_object_bytes,
+            } => put_foyer(cache, relative, bytes, *max_object_bytes).await,
         }
     }
 }
@@ -134,6 +177,7 @@ impl ImageStore {
 enum MountConfig {
     Local,
     S3(S3Settings),
+    Foyer,
 }
 
 struct S3Settings {
@@ -155,8 +199,53 @@ fn env_value(key: &str) -> Option<String> {
 }
 
 fn parse_mount(get: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<MountConfig> {
+    match storage_choice(get)? {
+        StorageChoice::Volume => Ok(MountConfig::Local),
+        StorageChoice::Foyer => Ok(MountConfig::Foyer),
+        StorageChoice::S3 => parse_s3(get),
+    }
+}
+
+enum StorageChoice {
+    Volume,
+    S3,
+    Foyer,
+}
+
+fn storage_choice(get: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<StorageChoice> {
+    let Some(value) = get("IMAGE_PROXY_STORAGE") else {
+        return Ok(if get("IMAGE_PROXY_S3_BUCKET").is_some() {
+            StorageChoice::S3
+        } else {
+            StorageChoice::Volume
+        });
+    };
+    let value = value.to_ascii_lowercase();
+    match value.as_str() {
+        "volume" => {
+            if get("IMAGE_PROXY_S3_BUCKET").is_some() {
+                anyhow::bail!(
+                    "IMAGE_PROXY_STORAGE=volume keeps the local directory; unset IMAGE_PROXY_S3_BUCKET or set IMAGE_PROXY_STORAGE=s3"
+                );
+            }
+            Ok(StorageChoice::Volume)
+        }
+        "s3" => Ok(StorageChoice::S3),
+        "foyer" => {
+            if get("IMAGE_PROXY_S3_BUCKET").is_some() {
+                anyhow::bail!(
+                    "IMAGE_PROXY_STORAGE=foyer keeps image bytes in the foyer cache; unset IMAGE_PROXY_S3_BUCKET or set IMAGE_PROXY_STORAGE=s3"
+                );
+            }
+            Ok(StorageChoice::Foyer)
+        }
+        _ => anyhow::bail!("IMAGE_PROXY_STORAGE must be volume, s3, or foyer (got {value})"),
+    }
+}
+
+fn parse_s3(get: &dyn Fn(&str) -> Option<String>) -> anyhow::Result<MountConfig> {
     let Some(bucket) = get("IMAGE_PROXY_S3_BUCKET") else {
-        return Ok(MountConfig::Local);
+        anyhow::bail!("IMAGE_PROXY_STORAGE=s3 requires IMAGE_PROXY_S3_BUCKET");
     };
     validate_bucket(&bucket)?;
 
@@ -486,6 +575,63 @@ async fn put_object(store: &dyn ObjectStore, relative: &Path, bytes: Bytes) -> s
     Ok(())
 }
 
+fn foyer_key(relative: &Path) -> std::io::Result<String> {
+    let key = object_key(relative)?;
+    Ok(format!("origin/{key}"))
+}
+
+async fn open_foyer(
+    cache: &foyer::HybridCache<String, Bytes>,
+    relative: &Path,
+) -> std::io::Result<Option<OpenedObject>> {
+    let key = foyer_key(relative)?;
+    let Some(entry) = cache.get(&key).await.map_err(std::io::Error::other)? else {
+        return Ok(None);
+    };
+    let bytes = entry.value().clone();
+    let size = u64::try_from(bytes.len()).unwrap_or(u64::MAX);
+    let stream = futures_util::stream::once(async move { Ok(bytes) });
+    Ok(Some(OpenedObject {
+        size,
+        stream: Box::pin(stream),
+    }))
+}
+
+async fn load_foyer(
+    cache: &foyer::HybridCache<String, Bytes>,
+    relative: &Path,
+    max: Option<usize>,
+) -> std::io::Result<Bytes> {
+    let key = foyer_key(relative)?;
+    let Some(entry) = cache.get(&key).await.map_err(std::io::Error::other)? else {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "object not found",
+        ));
+    };
+    let bytes = entry.value().clone();
+    if let Some(max) = max
+        && bytes.len() > max
+    {
+        return Err(too_large(max));
+    }
+    Ok(bytes)
+}
+
+async fn put_foyer(
+    cache: &foyer::HybridCache<String, Bytes>,
+    relative: &Path,
+    bytes: Bytes,
+    max_object_bytes: usize,
+) -> std::io::Result<()> {
+    if bytes.len() > max_object_bytes {
+        return Err(too_large(max_object_bytes));
+    }
+    let key = foyer_key(relative)?;
+    cache.insert(key, bytes);
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -498,10 +644,14 @@ mod tests {
         }
     }
 
+    fn err_message(result: anyhow::Result<MountConfig>) -> Option<String> {
+        result.err().map(|err| err.to_string())
+    }
+
     fn s3(config: &MountConfig) -> &S3Settings {
         match config {
             MountConfig::S3(settings) => Some(settings),
-            MountConfig::Local => None,
+            MountConfig::Local | MountConfig::Foyer => None,
         }
         .unwrap()
     }
@@ -692,5 +842,144 @@ mod tests {
         .unwrap();
         let label = s3_label(s3(&config));
         assert_eq!(label, "s3://photos region=eu-west-1 security-token");
+    }
+
+    #[test]
+    fn explicit_volume_stays_on_local_disk() {
+        let config = parse_mount(&lookup(&[("IMAGE_PROXY_STORAGE", "volume")])).unwrap();
+        assert!(matches!(config, MountConfig::Local));
+    }
+
+    #[test]
+    fn explicit_s3_requires_a_bucket() {
+        let err = err_message(parse_mount(&lookup(&[("IMAGE_PROXY_STORAGE", "s3")])));
+        assert!(
+            err.expect("storage config should be rejected")
+                .contains("IMAGE_PROXY_S3_BUCKET")
+        );
+    }
+
+    #[test]
+    fn explicit_s3_selects_the_bucket() {
+        let config = parse_mount(&lookup(&[
+            ("IMAGE_PROXY_STORAGE", "S3"),
+            ("IMAGE_PROXY_S3_BUCKET", "photos"),
+            ("IMAGE_PROXY_S3_ACCESS_KEY_ID", "AKIA_EXAMPLE"),
+            ("IMAGE_PROXY_S3_SECRET_ACCESS_KEY", "secret-value"),
+        ]))
+        .unwrap();
+        assert_eq!(s3(&config).bucket, "photos");
+    }
+
+    #[test]
+    fn volume_rejects_a_bucket() {
+        let err = err_message(parse_mount(&lookup(&[
+            ("IMAGE_PROXY_STORAGE", "volume"),
+            ("IMAGE_PROXY_S3_BUCKET", "photos"),
+        ])));
+        assert!(
+            err.expect("storage config should be rejected")
+                .contains("IMAGE_PROXY_STORAGE=volume")
+        );
+    }
+
+    #[test]
+    fn foyer_is_selected_explicitly() {
+        let config = parse_mount(&lookup(&[("IMAGE_PROXY_STORAGE", "Foyer")])).unwrap();
+        assert!(matches!(config, MountConfig::Foyer));
+    }
+
+    #[test]
+    fn foyer_rejects_a_bucket() {
+        let err = err_message(parse_mount(&lookup(&[
+            ("IMAGE_PROXY_STORAGE", "foyer"),
+            ("IMAGE_PROXY_S3_BUCKET", "photos"),
+        ])));
+        assert!(
+            err.expect("storage config should be rejected")
+                .contains("IMAGE_PROXY_STORAGE=foyer")
+        );
+    }
+
+    #[test]
+    fn unknown_storage_is_rejected() {
+        let err = err_message(parse_mount(&lookup(&[("IMAGE_PROXY_STORAGE", "disk")])));
+        assert!(
+            err.expect("storage config should be rejected")
+                .contains("volume, s3, or foyer")
+        );
+    }
+
+    #[tokio::test]
+    async fn foyer_put_round_trips_and_rejects_oversize_objects() {
+        let cache = foyer::HybridCacheBuilder::new()
+            .memory(1024 * 1024)
+            .with_weighter(|key: &String, value: &Bytes| key.len().saturating_add(value.len()))
+            .storage()
+            .build()
+            .await
+            .unwrap();
+        let store = ImageStore::foyer(cache, 8);
+        let err = store
+            .put(Path::new("big.jpg"), Bytes::from_static(b"0123456789"))
+            .await
+            .unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::FileTooLarge);
+
+        store
+            .put(Path::new("a.jpg"), Bytes::from_static(b"hello"))
+            .await
+            .unwrap();
+        let loaded = store.load(Path::new("a.jpg"), None).await.unwrap();
+        assert_eq!(loaded.as_ref(), b"hello");
+
+        use futures_util::StreamExt;
+        let mut opened = store.open(Path::new("a.jpg")).await.unwrap().unwrap();
+        assert_eq!(opened.size, 5);
+        let chunk = opened.stream.next().await.unwrap().unwrap();
+        assert_eq!(chunk.as_ref(), b"hello");
+        assert!(
+            store
+                .open(Path::new("missing.jpg"))
+                .await
+                .unwrap()
+                .is_none()
+        );
+
+        let parent = store
+            .put(Path::new("../secret.jpg"), Bytes::from_static(b"no"))
+            .await
+            .unwrap_err();
+        assert_eq!(parent.kind(), std::io::ErrorKind::InvalidInput);
+    }
+
+    #[tokio::test]
+    async fn foyer_origin_keeps_large_objects_while_transforms_stay_small() {
+        let config = crate::config::EncodingConfig {
+            enable_cache: true,
+            cache_memory_size: 1024 * 1024,
+            cache_memory_max_item_size: 8,
+            enable_disk_cache: false,
+            ..crate::config::EncodingConfig::default()
+        };
+        let registry = prometheus::Registry::new();
+        let cache = crate::cache::setup_origin_cache(&config, &registry)
+            .await
+            .unwrap();
+        let store = ImageStore::foyer(cache.clone(), crate::cache::origin_capacity(&config));
+        let body = Bytes::from(vec![7u8; 32]);
+        store
+            .put(Path::new("photo.jpg"), body.clone())
+            .await
+            .unwrap();
+        assert_eq!(
+            store.load(Path::new("photo.jpg"), None).await.unwrap(),
+            body
+        );
+
+        let transform_key = "photo.jpg?format=png&size=10&resize=&dpr=&bw=false".to_string();
+        cache.insert(transform_key.clone(), Bytes::from(vec![1u8; 32]));
+        let cached = cache.get(&transform_key).await.unwrap();
+        assert!(cached.is_none());
     }
 }
