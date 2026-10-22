@@ -26,7 +26,7 @@ The caller's `Authorization` header is forwarded. Do not put credentials in the 
 
 ## Fallback Image
 
-If using the fallback image feature (`IMAGE_PROXY_FALLBACK_IMAGE_URL`), set a reasonable `IMAGE_PROXY_FALLBACK_IMAGE_MAX_SIZE` to prevent abuse. The default limit is 5 MB.
+If using the fallback image feature (`IMAGE_PROXY_FALLBACK_IMAGE_URL`), set a reasonable `IMAGE_PROXY_FALLBACK_IMAGE_MAX_SIZE` to prevent abuse. The default limit is 5 MB. `IMAGE_PROXY_WRITE_BACK_ON_FETCH` copies those upstream bytes into the mounted store, so point the fallback URL only at an origin you trust.
 
 ## Deployment Recommendations
 

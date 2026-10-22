@@ -106,7 +106,7 @@ curl -X PUT \
   --data-binary @photo.jpg \
   http://localhost:8000/albums/photo.jpg
 ```
-- **File not found + fallback URL** — The image is fetched from the configured `IMAGE_PROXY_FALLBACK_IMAGE_URL`, transformed, and served. The response size is capped by `IMAGE_PROXY_FALLBACK_IMAGE_MAX_SIZE`.
+- **File not found + fallback URL** — The image is fetched from the configured `IMAGE_PROXY_FALLBACK_IMAGE_URL`, transformed, and served. The response size is capped by `IMAGE_PROXY_FALLBACK_IMAGE_MAX_SIZE`. Set `IMAGE_PROXY_WRITE_BACK_ON_FETCH=true` to also store the upstream bytes at the request path. Later requests then read the mounted store. The upload token is not required for that write. A derivative is still cached separately and is not what gets written to the store.
 - **File not found + no fallback** — Returns `404 Not Found`.
 
 ---

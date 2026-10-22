@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::Path, sync::Arc};
 
 use crate::{
     config::EncodingConfig,
@@ -37,6 +37,55 @@ fn resolve_store(req: &HttpRequest, root_path: &str) -> ImageStore {
     req.app_data::<web::Data<ImageStore>>()
         .map(|data| data.get_ref().clone())
         .unwrap_or_else(|| ImageStore::local(root_path))
+}
+
+/// Writes the original fallback bytes into the mounted store.
+///
+/// The object is the upstream body, not a resized or re-encoded derivative.
+/// An empty body, a body over `max_source_size`, or a store error does not
+/// fail the request. Those cases are logged and the fetched image is still served.
+async fn write_back_fallback(
+    store: &ImageStore,
+    relative: &Path,
+    bytes: &Bytes,
+    max_source_size: Option<usize>,
+) {
+    if bytes.is_empty() {
+        tracing::warn!(
+            path = %relative.display(),
+            "skipped write-back of an empty fallback image"
+        );
+        return;
+    }
+    if let Some(limit) = max_source_size
+        && bytes.len() > limit
+    {
+        tracing::warn!(
+            path = %relative.display(),
+            bytes = bytes.len(),
+            limit,
+            "skipped write-back; fallback image exceeds max source size"
+        );
+        return;
+    }
+    match store.put(relative, bytes.clone()).await {
+        Ok(()) => {
+            tracing::info!(
+                path = %relative.display(),
+                bytes = bytes.len(),
+                store = %store,
+                "wrote fallback image back to store"
+            );
+        }
+        Err(err) => {
+            tracing::error!(
+                path = %relative.display(),
+                error = %err,
+                store = %store,
+                "failed to write fallback image back to store"
+            );
+        }
+    }
 }
 
 #[actix_web::get("/{filename:.*}")]
@@ -269,26 +318,25 @@ pub async fn process_image_request(
             .into());
         }
 
-        let content_type = upstream_response.content_type();
-        let parsed_format = content_type
+        let upstream_content_type = upstream_response.content_type().to_string();
+        let parsed_format = upstream_content_type
             .split('/')
             .nth(1)
             .and_then(|s| s.split(';').next())
             .map(|s| s.trim().to_lowercase())
             .unwrap_or_else(|| "".to_string());
 
-        // If the upstream fallback image is in the same format as the requested format and no transformations
-        // are requested, we can directly stream it without loading it into memory
-        if query_params.is_empty() && parsed_format == effective_format {
+        // Same format and no transform: stream unless write-back needs the bytes.
+        let can_stream = query_params.is_empty() && parsed_format == effective_format;
+        if can_stream && !config.write_back_on_fetch {
             // Content-Length unknown for streaming fallback; bytes counter skipped.
             tracker.ok(RequestPath::Fallback, 0);
             let mut builder = HttpResponse::Ok();
-            builder.content_type(content_type);
+            builder.content_type(upstream_content_type);
             add_headers_for_caching(&mut builder, &config);
             return Ok(builder.streaming(upstream_response));
         }
 
-        // Otherwise, attempt to load the fallback image and apply transformations to it
         image_bytes = upstream_response
             .body()
             .limit(config.fallback_image_max_size)
@@ -298,6 +346,23 @@ pub async fn process_image_request(
                 tracker.fail(RequestPath::Fallback, RequestStatus::BadGateway);
                 actix_web::error::ErrorBadGateway("Failed to read fallback image body")
             })?;
+
+        // Write-back has to buffer. Respond with those bytes when nothing else
+        // would have been decoded.
+        if can_stream {
+            write_back_fallback(
+                &store,
+                &sanitized_path,
+                &image_bytes,
+                config.max_source_size,
+            )
+            .await;
+            tracker.ok(RequestPath::Fallback, image_bytes.len() as u64);
+            let mut builder = HttpResponse::Ok();
+            builder.content_type(upstream_content_type);
+            add_headers_for_caching(&mut builder, &config);
+            return Ok(builder.body(image_bytes));
+        }
     } else {
         tracker.set_format(ext.clone());
         tracker.fail(RequestPath::NotFound, RequestStatus::NotFound);
@@ -310,6 +375,14 @@ pub async fn process_image_request(
         (true, false) => RequestPath::FallbackTransform,
         (false, true) => RequestPath::NonProcessable,
         (true, true) => RequestPath::Fallback,
+    };
+
+    // The pipeline replaces `image_bytes` with the derivative. Write-back stores
+    // the upstream object so the bucket fills without an uploader.
+    let fallback_origin = if from_fallback && config.write_back_on_fetch {
+        Some(image_bytes.clone())
+    } else {
+        None
     };
 
     // Non-processable formats are returned as-is even if transform query params are present.
@@ -353,6 +426,10 @@ pub async fn process_image_request(
         })?;
 
         image_bytes = Bytes::from(result_image_bytes);
+    }
+
+    if let Some(origin) = &fallback_origin {
+        write_back_fallback(&store, &sanitized_path, origin, config.max_source_size).await;
     }
 
     // Store the transformed result in cache

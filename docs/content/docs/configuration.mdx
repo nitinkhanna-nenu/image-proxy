@@ -110,6 +110,7 @@ The URL must be `http` or `https`, with a host and no user info, query, or fragm
 | ------------------------------------- | ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
 | `IMAGE_PROXY_FALLBACK_IMAGE_URL`      | _(unset)_               | Base URL for fetching images not found in the mounted store (e.g., `https://cdn.example.com/images/`)                                        |
 | `IMAGE_PROXY_FALLBACK_IMAGE_MAX_SIZE` | `5242880` (5 MB)        | Maximum size in bytes for fallback image responses. Prevents excessive memory usage.                                                         |
+| `IMAGE_PROXY_WRITE_BACK_ON_FETCH`     | `false`                 | When `true`, a successful fallback fetch is written to the mounted store at the request path. The stored object is the upstream bytes, not the transformed response. This write does not use `IMAGE_PROXY_UPLOAD_TOKEN`. A failed write is logged and the image is still served. Bodies larger than `IMAGE_PROXY_MAX_SOURCE_SIZE` are not written. With the flag on, a no-transform fetch is buffered so it can be stored. |
 | `IMAGE_PROXY_USER_AGENT`              | `image-proxy/<version>` | `User-Agent` header sent when fetching fallback images from an upstream. Loaded into `EncodingConfig`; empty/whitespace falls back to default. |
 
 ## Encoding

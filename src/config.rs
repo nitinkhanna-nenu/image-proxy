@@ -37,6 +37,10 @@ pub struct EncodingConfig {
     // Fallback image configuration
     pub fallback_image_url: Option<String>,
     pub fallback_image_max_size: usize,
+    /// When true, a successful fallback fetch is stored at the request path.
+    /// The object is the upstream bytes, not a transformed derivative.
+    /// A store error is logged and the response is still served.
+    pub write_back_on_fetch: bool,
     /// `User-Agent` sent on outbound fallback image fetches
     pub user_agent: String,
 
@@ -132,6 +136,10 @@ impl EncodingConfig {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(5 * 1024 * 1024), // Default to 5 MB
+            write_back_on_fetch: std::env::var("IMAGE_PROXY_WRITE_BACK_ON_FETCH")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(false),
             user_agent: crate::utils::user_agent_from_override(
                 std::env::var(crate::utils::USER_AGENT_ENV).ok(),
             ),
@@ -210,6 +218,7 @@ impl Default for EncodingConfig {
             strip_path: None,
             fallback_image_url: None,
             fallback_image_max_size: 5 * 1024 * 1024,
+            write_back_on_fetch: false,
             user_agent: crate::utils::default_user_agent(),
             cache_status_header: "X-Image-Proxy-Cache".to_string(),
             enable_cache: false,
